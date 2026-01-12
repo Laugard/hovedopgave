@@ -1,123 +1,115 @@
-// src/data/api.ts
-import { dbRead, dbWrite } from "./mockDb";
-import { hashPasswordUIOnly } from "./seed";
-import type { AllowlistEntry, AreaKey, AuthUser, Guide, GuideVersion, GuideWithVersion, SessionRow, UserRow } from "./types";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:4000/api";
 
-function requireDb() {
-  const db = dbRead();
-  if (!db) throw new Error("DB ikke initialiseret. Genindlæs siden.");
-  return db;
-}
-
-function save(db: any) {
-  dbWrite(db);
-}
-
-function id(prefix: string) {
-  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
-}
-
-function setToken(token: string) {
-  localStorage.setItem("bilka_auth_token", token);
-}
 function getToken() {
-  return localStorage.getItem("bilka_auth_token") || "";
-}
-function clearToken() {
-  localStorage.removeItem("bilka_auth_token");
+  return localStorage.getItem("auth_token") || "";
 }
 
-export function apiMe(): AuthUser | null {
+async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
-  if (!token) return null;
 
-  const db = requireDb();
-  const session = (db.sessions as SessionRow[]).find((s) => s.token === token);
-  if (!session) return null;
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
 
-  const user = (db.users as UserRow[]).find((u) => u.id === session.userId);
-  if (!user || !user.isActive) return null;
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
+  }
 
-  return { id: user.id, payrollNumber: user.payrollNumber, role: user.role };
+  return res.json() as Promise<T>;
 }
 
-export async function apiLogin(payrollNumber: string, password: string): Promise<AuthUser> {
-  const db = requireDb();
-  const pn = payrollNumber.trim();
-
-  const user = (db.users as UserRow[]).find((u) => u.payrollNumber === pn);
-  if (!user) throw new Error("Ugyldigt lønnummer eller adgangskode.");
-  if (!user.isActive) throw new Error("Bruger er deaktiveret.");
-
-  const hash = hashPasswordUIOnly(password);
-  if (hash !== user.passwordHash) throw new Error("Ugyldigt lønnummer eller adgangskode.");
-
-  const token = id("t");
-  (db.sessions as SessionRow[]).push({ token, userId: user.id, createdAt: new Date().toISOString() });
-  save(db);
-  setToken(token);
-
-  return { id: user.id, payrollNumber: user.payrollNumber, role: user.role };
+// Auth
+export async function apiActivate(payrollNumber: string, password: string) {
+  return apiFetch<{ token: string; user: any }>("/auth/activate", {
+    method: "POST",
+    body: JSON.stringify({ payrollNumber, password }),
+  });
 }
 
-export function apiLogout() {
-  const token = getToken();
-  if (!token) return;
-
-  const db = requireDb();
-  db.sessions = (db.sessions as SessionRow[]).filter((s) => s.token !== token);
-  save(db);
-  clearToken();
+export async function apiLogin(payrollNumber: string, password: string) {
+  return apiFetch<{ token: string; user: any }>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ payrollNumber, password }),
+  });
 }
 
-export async function apiActivateAccount(payrollNumber: string, password: string, repeatPassword: string): Promise<AuthUser> {
-  const db = requireDb();
-  const pn = payrollNumber.trim();
-
-  if (!/^\d{4,10}$/.test(pn)) throw new Error("Lønnummer skal være tal (4-10 cifre).");
-  if (!password || password.length < 6) throw new Error("Adgangskode skal være mindst 6 tegn.");
-  if (password !== repeatPassword) throw new Error("Adgangskoderne matcher ikke.");
-
-  const allow = (db.allowlist as AllowlistEntry[]).find((a) => a.payrollNumber === pn);
-  if (!allow || !allow.isApproved) throw new Error("Lønnummer er ikke godkendt endnu.");
-  if (allow.isActivated) throw new Error("Lønnummer er allerede aktiveret.");
-
-  const exists = (db.users as UserRow[]).some((u) => u.payrollNumber === pn);
-  if (exists) throw new Error("Der findes allerede en konto til dette lønnummer.");
-
-  const newUser: UserRow = {
-    id: id("u"),
-    payrollNumber: pn,
-    role: allow.role,
-    passwordHash: hashPasswordUIOnly(password),
-    isActive: true,
-  };
-
-  (db.users as UserRow[]).push(newUser);
-  allow.isActivated = true;
-  save(db);
-
-  const token = id("t");
-  (db.sessions as SessionRow[]).push({ token, userId: newUser.id, createdAt: new Date().toISOString() });
-  save(db);
-  setToken(token);
-
-  return { id: newUser.id, payrollNumber: newUser.payrollNumber, role: newUser.role };
+// Guides
+export async function apiGetCategories() {
+  return apiFetch<{ categories: Array<{ id: number; slug: string; title: string }> }>("/categories");
 }
 
-export function apiListGuidesByArea(area: AreaKey): Guide[] {
-  const db = requireDb();
-  return (db.guides as Guide[]).filter((g) => g.area === area);
+export async function apiGetGuides(categorySlug?: string) {
+  const qs = categorySlug ? `?categorySlug=${encodeURIComponent(categorySlug)}` : "";
+  return apiFetch<{ guides: Array<{ id: number; slug: string; title: string; category_slug: string }> }>(`/guides${qs}`);
 }
 
-export function apiGetGuideByAreaSlug(area: AreaKey, slug: string): GuideWithVersion | null {
-  const db = requireDb();
-  const guide = (db.guides as Guide[]).find((g) => g.area === area && g.slug === slug);
-  if (!guide) return null;
+export async function apiGetGuide(area: string, slug: string) {
+  return apiFetch<{ guide: any }>(`/guides/${area}/${slug}`);
+}
 
-  const versions = (db.versions as GuideVersion[]).filter((v) => v.guideId === guide.id);
-  const latest = versions.sort((a, b) => b.versionNumber - a.versionNumber)[0];
-  if (!latest) return null;
+// Feedback + Suggestions
+export async function apiGetFeedback(guideId: number) {
+  return apiFetch<{ feedback: any[] }>(`/feedback?guideId=${guideId}`);
+}
 
-  return { ...guide, latestVersion: latest };
+export async function apiPostFeedback(guideId: number, message: string) {
+  return apiFetch<{ ok: true }>(`/feedback`, {
+    method: "POST",
+    body: JSON.stringify({ guideId, message }),
+  });
+}
+
+export async function apiGetSuggestions(guideId?: number) {
+  const qs = guideId ? `?guideId=${guideId}` : "";
+  return apiFetch<{ suggestions: any[] }>(`/suggestions${qs}`);
+}
+
+export async function apiPostSuggestion(guideId: number, title: string, proposedChanges: string) {
+  return apiFetch<{ ok: true }>(`/suggestions`, {
+    method: "POST",
+    body: JSON.stringify({ guideId, title, proposedChanges }),
+  });
+}
+
+export async function apiApproveSuggestion(suggestionId: number, decision: "APPROVED" | "REJECTED", comment?: string) {
+  return apiFetch<{ ok: true }>(`/approvals`, {
+    method: "POST",
+    body: JSON.stringify({ suggestionId, decision, comment: comment || "" }),
+  });
+}
+
+// Admin
+export async function apiAdminGetAllowlist() {
+  return apiFetch<{ allowlist: any[] }>(`/admin/allowlist`);
+}
+
+export async function apiAdminAddAllowlist(payrollNumber: string, role: "EMPLOYEE" | "APPROVER" | "ADMIN") {
+  return apiFetch<{ ok: true }>(`/admin/allowlist`, {
+    method: "POST",
+    body: JSON.stringify({ payrollNumber, role }),
+  });
+}
+
+export async function apiAdminPatchAllowlist(id: number, patch: { isApproved?: boolean; role?: string }) {
+  return apiFetch<{ ok: true }>(`/admin/allowlist/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function apiAdminGetUsers() {
+  return apiFetch<{ users: any[] }>(`/admin/users`);
+}
+
+export async function apiAdminPatchUser(id: number, patch: { isActive?: boolean; role?: string }) {
+  return apiFetch<{ ok: true }>(`/admin/users/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
 }

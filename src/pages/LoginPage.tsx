@@ -1,4 +1,3 @@
-// src/pages/LoginPage.tsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
@@ -9,7 +8,8 @@ export function LoginPage() {
 
   const [payrollNumber, setPayrollNumber] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   return (
     <div className="login-page">
@@ -50,24 +50,31 @@ export function LoginPage() {
           className="btn btn--primary"
           onClick={async () => {
             try {
+              setBusy(true);
               setError("");
               await login(payrollNumber.trim(), password);
-              navigate("/app");
+              navigate("/app", { replace: true });
             } catch (e: any) {
-              setError(e?.message ?? "Login fejlede.");
+              setError("Login fejlede. Tjek lønnummer/adgangskode eller om du er aktiv.");
+            } finally {
+              setBusy(false);
             }
           }}
-          disabled={!payrollNumber.trim() || !password}
+          disabled={busy || !payrollNumber.trim() || !password}
         >
-          Log ind
+          {busy ? "Logger ind..." : "Log ind"}
         </button>
 
-        <button className="btn btn--ghost" onClick={() => navigate("/activate")}>
+        <button
+          className="btn btn--ghost"
+          onClick={() => navigate("/activate")}
+          style={{ marginTop: 10 }}
+        >
           Aktivér ny konto
         </button>
 
         <div className="login-hint muted">
-          (UI-only: data gemmes lokalt i browseren, så du kan klikke rundt og teste flows)
+          (Nu kører login/aktivering via backend + database)
         </div>
       </div>
     </div>

@@ -1,235 +1,280 @@
-// src/pages/free/KasseFreePage.tsx
-import React, { useReducer } from "react";
+import React, { useMemo, useReducer, useState } from "react";
 
 type Screen =
   | "HOME"
   | "RETUR_MENU"
   | "MANUEL_RETUR"
   | "RETUR_ORIGINAL_BON"
-  | "PRINT_BONER"
-  | "SALGS_MENU"
-  | "KORREKTIONER"
-  | "SPECIELLE";
+  | "PRINT_BONER";
+
+type Action =
+  | { type: "NAVIGATE"; to: Screen }
+  | { type: "KEYPAD"; key: string }
+  | { type: "CLEAR" }
+  | { type: "BACK" }
+  | { type: "RESET" };
 
 type State = {
   screen: Screen;
-  header: {
-    shop: string;
-    cashier: string;
-    terminal: string;
-    receipt: string;
-    dateTime: string;
-  };
-  userName: string;
-  total: string;
-  keypad: string; // det brugeren har indtastet
-  log: string[];
+  input: string;
+  lastAction?: string;
 };
-
-type Action =
-  | { type: "NAV"; to: Screen }
-  | { type: "KEY"; key: string }
-  | { type: "CLEAR" }
-  | { type: "BACKSPACE" }
-  | { type: "RESET" };
 
 const initialState: State = {
   screen: "HOME",
-  header: {
-    shop: "Butiks nr. 5257",
-    cashier: "Kasserer 660",
-    terminal: "Terminal 45",
-    receipt: "Bon nr. 69",
-    dateTime: "21.12.2025, 22.11",
-  },
-  userName: "LAUGE",
-  total: "0,00 kr.",
-  keypad: "",
-  log: ["Klar (HOME)"],
+  input: "",
 };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
-    case "NAV": {
-      const next = action.to;
-      return {
-        ...state,
-        screen: next,
-        log: [`Skærm: ${next}`, ...state.log].slice(0, 20),
-      };
-    }
-    case "KEY": {
-      const next = (state.keypad + action.key).slice(0, 16);
-      return { ...state, keypad: next };
+    case "NAVIGATE":
+      return { ...state, screen: action.to, lastAction: `NAVIGATE:${action.to}` };
+    case "KEYPAD": {
+      const next = (state.input + action.key).slice(0, 12);
+      return { ...state, input: next, lastAction: `KEYPAD:${action.key}` };
     }
     case "CLEAR":
-      return { ...state, keypad: "" };
-    case "BACKSPACE":
-      return { ...state, keypad: state.keypad.slice(0, -1) };
+      return { ...state, input: "", lastAction: "CLEAR" };
+    case "BACK":
+      return { ...state, input: state.input.slice(0, -1), lastAction: "BACK" };
     case "RESET":
-      return { ...initialState, log: ["Nulstil (HOME)"] };
+      return { ...initialState, lastAction: "RESET" };
     default:
       return state;
   }
 }
 
+type GuideStep = {
+  title: string;
+  hint: string;
+  expect: (a: Action, s: State) => boolean;
+};
+
 export function KasseFreePage() {
+  const [mode, setMode] = useState<"FREE" | "GUIDED">("FREE");
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [error, setError] = useState("");
+
+  const steps: GuideStep[] = useMemo(
+    () => [
+      {
+        title: "Åbn Retur funktioner",
+        hint: "Klik på 'Retur funktioner' i menuen til højre.",
+        expect: (a) => a.type === "NAVIGATE" && a.to === "RETUR_MENU",
+      },
+      {
+        title: "Vælg Manuel retur",
+        hint: "Klik på 'Manuel retur'.",
+        expect: (a) => a.type === "NAVIGATE" && a.to === "MANUEL_RETUR",
+      },
+      {
+        title: "Indtast beløb",
+        hint: "Tryk fx 4 0 0 på tastaturet.",
+        expect: (a) => a.type === "KEYPAD",
+      },
+      {
+        title: "Nulstil træning",
+        hint: "Tryk 'C' for at rydde input.",
+        expect: (a) => a.type === "CLEAR",
+      },
+    ],
+    []
+  );
+
+  const currentStep = steps[stepIndex];
+
+  function guidedDispatch(a: Action) {
+    if (mode === "FREE") {
+      setError("");
+      dispatch(a);
+      return;
+    }
+
+    // GUIDED
+    if (!currentStep) {
+      setError("");
+      dispatch(a);
+      return;
+    }
+
+    const ok = currentStep.expect(a, state);
+    if (!ok) {
+      setError(`Forkert handling. ${currentStep.hint}`);
+      // vi udfører stadig action? typisk nej - for læring stopper vi den
+      return;
+    }
+
+    setError("");
+    dispatch(a);
+
+    // Step-advance efter "logiske" actions
+    // For keypad-step: avancer efter 3 tastetryk, så det føles realistisk
+    if (stepIndex === 2 && a.type === "KEYPAD") {
+      const nextLen = (state.input + a.key).length;
+      if (nextLen >= 3) setStepIndex((i) => Math.min(i + 1, steps.length - 1));
+      return;
+    }
+
+    setStepIndex((i) => Math.min(i + 1, steps.length - 1));
+  }
+
+  const menuItems: Array<{ label: string; to: Screen }> = [
+    { label: "Print boner", to: "PRINT_BONER" },
+    { label: "Retur funktioner", to: "RETUR_MENU" },
+    { label: "Manuel retur", to: "MANUEL_RETUR" },
+    { label: "Retur via. original bon", to: "RETUR_ORIGINAL_BON" },
+  ];
 
   return (
     <div>
       <h1>Kasse – fri træning</h1>
-      <p className="muted">Digital kasse (mock) i fri tilstand.</p>
+      <p className="muted">
+        Digital kasse (mock). Træning kører isoleret og påvirker ikke rigtige systemer.
+      </p>
 
       <div className="panel">
-        <h2>Interaktiv del</h2>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>
+          <strong>Mode:</strong>
+          <button
+            className={`btn ${mode === "FREE" ? "btn--primary" : "btn--ghost"}`}
+            onClick={() => {
+              setMode("FREE");
+              setError("");
+            }}
+          >
+            Fri træning
+          </button>
+          <button
+            className={`btn ${mode === "GUIDED" ? "btn--primary" : "btn--ghost"}`}
+            onClick={() => {
+              setMode("GUIDED");
+              setStepIndex(0);
+              setError("");
+              dispatch({ type: "RESET" });
+            }}
+          >
+            Guidet træning
+          </button>
 
-        <div className="kasse-wrap" aria-label="Kasse simulator (UI mock)">
-          <div className="kasse-topbar">
-            <div className="kasse-topbar-left">
-              <span>{state.header.shop}</span>
-              <span>{state.header.cashier}</span>
-              <span>{state.header.terminal}</span>
-            </div>
-            <div className="kasse-topbar-right">
-              <span>{state.header.receipt}</span>
-              <span>{state.header.dateTime}</span>
-            </div>
-          </div>
-
-          <div className="kasse-main">
-            <div className="kasse-left">
-              <div className="kasse-left-header">
-                <div className="kasse-user">
-                  <div className="kasse-user-name">{state.userName}</div>
-                  <div className="kasse-user-sub">*</div>
-                </div>
-
-                <div className="kasse-mini">
-                  <div className="pill pill--soft">Skærm: {state.screen}</div>
-                  <div className="pill pill--soft">Input: {state.keypad || "—"}</div>
-                </div>
-              </div>
-
-              <div className="kasse-totalbar">
-                <div className="kasse-total-label">Total</div>
-                <div className="kasse-total-amount">{state.total}</div>
-              </div>
-
-              <div className="kasse-keypad">
-                <button className="kbtn" onClick={() => dispatch({ type: "KEY", key: "7" })}>
-                  7
-                </button>
-                <button className="kbtn" onClick={() => dispatch({ type: "KEY", key: "8" })}>
-                  8
-                </button>
-                <button className="kbtn" onClick={() => dispatch({ type: "KEY", key: "9" })}>
-                  9
-                </button>
-                <button className="kbtn kbtn-icon" onClick={() => dispatch({ type: "BACKSPACE" })} aria-label="Slet">
-                  ⌫
-                </button>
-                <button className="kbtn" onClick={() => dispatch({ type: "CLEAR" })}>
-                  C
-                </button>
-
-                <button className="kbtn" onClick={() => dispatch({ type: "KEY", key: "4" })}>
-                  4
-                </button>
-                <button className="kbtn" onClick={() => dispatch({ type: "KEY", key: "5" })}>
-                  5
-                </button>
-                <button className="kbtn" onClick={() => dispatch({ type: "KEY", key: "6" })}>
-                  6
-                </button>
-                <button className="kbtn" onClick={() => dispatch({ type: "KEY", key: "X" })}>
-                  X
-                </button>
-                <button className="kbtn kbtn-icon" onClick={() => dispatch({ type: "KEY", key: "↩" })} aria-label="Tilbage">
-                  ↩
-                </button>
-
-                <button className="kbtn" onClick={() => dispatch({ type: "KEY", key: "1" })}>
-                  1
-                </button>
-                <button className="kbtn" onClick={() => dispatch({ type: "KEY", key: "2" })}>
-                  2
-                </button>
-                <button className="kbtn" onClick={() => dispatch({ type: "KEY", key: "3" })}>
-                  3
-                </button>
-                <div className="kbtn kbtn-spacer" aria-hidden="true" />
-                <div className="kbtn kbtn-spacer" aria-hidden="true" />
-
-                <button className="kbtn" onClick={() => dispatch({ type: "KEY", key: "0" })}>
-                  0
-                </button>
-                <button className="kbtn" onClick={() => dispatch({ type: "KEY", key: "00" })}>
-                  00
-                </button>
-                <div className="kbtn kbtn-spacer" aria-hidden="true" />
-                <div className="kbtn kbtn-spacer" aria-hidden="true" />
-                <div className="kbtn kbtn-spacer" aria-hidden="true" />
-              </div>
-
-              <div className="kasse-log">
-                <div className="kasse-log-title">Log</div>
-                <ul>
-                  {state.log.map((l, i) => (
-                    <li key={i}>{l}</li>
-                  ))}
-                </ul>
-                <button className="btn btn--ghost" onClick={() => dispatch({ type: "RESET" })}>
-                  Nulstil
-                </button>
-              </div>
-            </div>
-
-            <div className="kasse-right">
-              <div className="kasse-right-header">
-                <div className="kasse-avatar" aria-hidden="true">
-                  👤
-                </div>
-                <div className="kasse-right-user">{state.userName}</div>
-              </div>
-
-              <div className="kasse-menu">
-                <MenuRow label="Print boner" onClick={() => dispatch({ type: "NAV", to: "PRINT_BONER" })} />
-                <MenuRow label="Retur funktioner" onClick={() => dispatch({ type: "NAV", to: "RETUR_MENU" })} />
-                <MenuRow label="Manuel retur" onClick={() => dispatch({ type: "NAV", to: "MANUEL_RETUR" })} />
-                <MenuRow label="Retur via. original bon" onClick={() => dispatch({ type: "NAV", to: "RETUR_ORIGINAL_BON" })} />
-                <MenuRow label="Salgs funktioner" onClick={() => dispatch({ type: "NAV", to: "SALGS_MENU" })} />
-                <MenuRow label="Specielle funktioner" onClick={() => dispatch({ type: "NAV", to: "SPECIELLE" })} />
-                <MenuRow label="Korrektioner" onClick={() => dispatch({ type: "NAV", to: "KORREKTIONER" })} />
-              </div>
-
-              <div className="kasse-danger">
-                <button className="kasse-danger-btn" onClick={() => dispatch({ type: "NAV", to: "HOME" })}>
-                  Skift sælger
-                </button>
-                <button className="kasse-danger-btn" onClick={() => dispatch({ type: "RESET" })}>
-                  Frameld
-                </button>
-              </div>
-            </div>
-          </div>
+          {mode === "GUIDED" ? (
+            <button
+              className="btn btn--ghost"
+              onClick={() => {
+                setStepIndex(0);
+                setError("");
+                dispatch({ type: "RESET" });
+              }}
+              style={{ marginLeft: "auto" }}
+            >
+              Nulstil
+            </button>
+          ) : null}
         </div>
 
-        <p className="muted" style={{ marginTop: 12 }}>
-          (UI-only: Reducer styrer navigation og input, så du kan “klikke rundt” som en kasse.)
-        </p>
+        {mode === "GUIDED" ? (
+          <div className="panel" style={{ marginBottom: 14 }}>
+            <h2>Trin {stepIndex + 1} / {steps.length}: {currentStep?.title}</h2>
+            <p className="muted">{currentStep?.hint}</p>
+            {error ? <div className="form-error">{error}</div> : null}
+          </div>
+        ) : null}
+
+        <CashRegisterUI
+          screen={state.screen}
+          input={state.input}
+          menuItems={menuItems}
+          onMenu={(to) => guidedDispatch({ type: "NAVIGATE", to })}
+          onKey={(k) => guidedDispatch({ type: "KEYPAD", key: k })}
+          onBack={() => guidedDispatch({ type: "BACK" })}
+          onClear={() => guidedDispatch({ type: "CLEAR" })}
+        />
       </div>
     </div>
   );
 }
 
-function MenuRow({ label, onClick }: { label: string; onClick: () => void }) {
+function CashRegisterUI(props: {
+  screen: Screen;
+  input: string;
+  menuItems: Array<{ label: string; to: Screen }>;
+  onMenu: (to: Screen) => void;
+  onKey: (k: string) => void;
+  onBack: () => void;
+  onClear: () => void;
+}) {
+  const { screen, input, menuItems, onMenu, onKey, onBack, onClear } = props;
+
   return (
-    <button className="kasse-menu-row" onClick={onClick}>
-      <span className="kasse-menu-text">{label}</span>
-      <span className="kasse-menu-arrow" aria-hidden="true">
-        ›
-      </span>
-    </button>
+    <div className="kasse-wrap" aria-label="Kasse simulator (UI mock)">
+      <div className="kasse-topbar">
+        <div className="kasse-topbar-left">
+          <span>Butiks nr. 5257</span>
+          <span>Kasserer 660</span>
+          <span>Terminal 45</span>
+        </div>
+        <div className="kasse-topbar-right">
+          <span>Skærm: {screen}</span>
+          <span>21.12.2025, 22.11</span>
+        </div>
+      </div>
+
+      <div className="kasse-main">
+        <div className="kasse-left">
+          <div className="kasse-left-header">
+            <div className="kasse-user">
+              <div className="kasse-user-name">LAUGE</div>
+              <div className="kasse-user-sub">*</div>
+            </div>
+          </div>
+
+          <div className="kasse-totalbar">
+            <div className="kasse-total-label">Input</div>
+            <div className="kasse-total-amount">{input || "—"}</div>
+          </div>
+
+          <div className="kasse-keypad">
+            {["7","8","9"].map((k) => <button key={k} className="kbtn" onClick={() => onKey(k)}>{k}</button>)}
+            <button className="kbtn kbtn-icon" onClick={onBack} aria-label="Slet">⌫</button>
+            <button className="kbtn" onClick={onClear}>C</button>
+
+            {["4","5","6"].map((k) => <button key={k} className="kbtn" onClick={() => onKey(k)}>{k}</button>)}
+            <button className="kbtn" onClick={() => onKey("X")}>X</button>
+            <button className="kbtn kbtn-icon" onClick={() => onKey("↩")} aria-label="Tilbage">↩</button>
+
+            {["1","2","3"].map((k) => <button key={k} className="kbtn" onClick={() => onKey(k)}>{k}</button>)}
+            <button className="kbtn kbtn-spacer" tabIndex={-1} aria-hidden="true" />
+            <button className="kbtn kbtn-spacer" tabIndex={-1} aria-hidden="true" />
+
+            <button className="kbtn" onClick={() => onKey("0")}>0</button>
+            <button className="kbtn" onClick={() => onKey("00")}>00</button>
+            <button className="kbtn kbtn-spacer" tabIndex={-1} aria-hidden="true" />
+            <button className="kbtn kbtn-spacer" tabIndex={-1} aria-hidden="true" />
+            <button className="kbtn kbtn-spacer" tabIndex={-1} aria-hidden="true" />
+          </div>
+        </div>
+
+        <div className="kasse-right">
+          <div className="kasse-right-header">
+            <div className="kasse-avatar" aria-hidden="true">👤</div>
+            <div className="kasse-right-user">LAUGE</div>
+          </div>
+
+          <div className="kasse-menu">
+            {menuItems.map((m) => (
+              <button key={m.label} className="kasse-menu-row" onClick={() => onMenu(m.to)}>
+                <span className="kasse-menu-text">{m.label}</span>
+                <span className="kasse-menu-arrow" aria-hidden="true">›</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="kasse-danger">
+            <button className="kasse-danger-btn">Skift sælger</button>
+            <button className="kasse-danger-btn">Frameld</button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

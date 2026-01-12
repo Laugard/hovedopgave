@@ -1,50 +1,61 @@
-// src/auth/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { seedIfNeeded } from "../data/seed";
-import { apiActivateAccount, apiLogin, apiLogout, apiMe } from "../data/api";
-import type { AuthUser } from "../data/types";
+import { apiActivate, apiLogin } from "../data/api";
 
-type AuthContextValue = {
+type Role = "EMPLOYEE" | "APPROVER" | "ADMIN";
+
+type AuthUser = {
+  id: number;
+  payrollNumber: string;
+  role: Role;
+};
+
+type AuthCtx = {
   user: AuthUser | null;
-  isReady: boolean;
+  token: string;
   login: (payrollNumber: string, password: string) => Promise<void>;
-  activate: (payrollNumber: string, password: string, repeatPassword: string) => Promise<void>;
+  activate: (payrollNumber: string, password: string) => Promise<void>;
   logout: () => void;
 };
 
-const AuthContext = createContext<AuthContextValue | null>(null);
+const AuthContext = createContext<AuthCtx | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [isReady, setIsReady] = useState(false);
+  const [token, setToken] = useState<string>(() => localStorage.getItem("auth_token") || "");
+  const [user, setUser] = useState<AuthUser | null>(() => {
+    const raw = localStorage.getItem("auth_user");
+    return raw ? (JSON.parse(raw) as AuthUser) : null;
+  });
 
   useEffect(() => {
-    seedIfNeeded();
-    // restore session
-    const u = apiMe();
-    setUser(u);
-    setIsReady(true);
-  }, []);
+    if (token) localStorage.setItem("auth_token", token);
+    else localStorage.removeItem("auth_token");
+  }, [token]);
 
-  const value = useMemo<AuthContextValue>(
-    () => ({
+  useEffect(() => {
+    if (user) localStorage.setItem("auth_user", JSON.stringify(user));
+    else localStorage.removeItem("auth_user");
+  }, [user]);
+
+  const value = useMemo<AuthCtx>(() => {
+    return {
       user,
-      isReady,
+      token,
       login: async (payrollNumber, password) => {
-        const u = await apiLogin(payrollNumber, password);
-        setUser(u);
+        const res = await apiLogin(payrollNumber, password);
+        setToken(res.token);
+        setUser(res.user);
       },
-      activate: async (payrollNumber, password, repeatPassword) => {
-        const u = await apiActivateAccount(payrollNumber, password, repeatPassword);
-        setUser(u);
+      activate: async (payrollNumber, password) => {
+        const res = await apiActivate(payrollNumber, password);
+        setToken(res.token);
+        setUser(res.user);
       },
       logout: () => {
-        apiLogout();
+        setToken("");
         setUser(null);
       },
-    }),
-    [user, isReady]
-  );
+    };
+  }, [user, token]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

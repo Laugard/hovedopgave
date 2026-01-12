@@ -1,4 +1,3 @@
-// src/pages/ActivateAccountPage.tsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
@@ -10,7 +9,15 @@ export function ActivateAccountPage() {
   const [payrollNumber, setPayrollNumber] = useState("");
   const [password, setPassword] = useState("");
   const [repeatPassword, setRepeatPassword] = useState("");
-  const [error, setError] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const disabled =
+    !payrollNumber.trim() ||
+    !password ||
+    password.length < 6 ||
+    !repeatPassword ||
+    password !== repeatPassword;
 
   return (
     <div className="login-page">
@@ -63,25 +70,24 @@ export function ActivateAccountPage() {
           className="btn btn--primary"
           onClick={async () => {
             try {
+              setBusy(true);
               setError("");
-              await activate(payrollNumber.trim(), password, repeatPassword);
+              await activate(payrollNumber.trim(), password);
               navigate("/app", { replace: true });
-            } catch (e: any) {
-              setError(e?.message ?? "Aktivering fejlede.");
+            } catch {
+              setError("Aktivering fejlede. Er dit lønnummer godkendt af admin?");
+            } finally {
+              setBusy(false);
             }
           }}
-          disabled={!payrollNumber.trim() || !password || !repeatPassword}
+          disabled={busy || disabled}
         >
-          Aktivér konto
+          {busy ? "Aktiverer..." : "Aktivér konto"}
         </button>
 
-        <button className="btn btn--ghost" onClick={() => navigate("/login")}>
+        <button className="btn btn--ghost" onClick={() => navigate("/login")} style={{ marginTop: 10 }}>
           Tilbage til login
         </button>
-
-        <div className="login-hint muted">
-          Tip: Seedet allowlist indeholder fx 123456 (EMPLOYEE) og 999999 (ADMIN).
-        </div>
       </div>
     </div>
   );
